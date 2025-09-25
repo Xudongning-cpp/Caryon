@@ -799,7 +799,7 @@ namespace CaryonIO {
 			freopen(name.c_str(), "w", stdout);
 			freopen(name.c_str(), "r", stdin);
 		}
-		graph.print(graph);
+		std::cout << graph;
 		++invocationCount;
 	}
 
@@ -812,7 +812,7 @@ namespace CaryonIO {
 	template <typename T>
 	inline void writeCase(const T &value) {
 		std::string c, tnmp;
-		std::stringstream ss, cci;
+		std::stringstream cci;
 		if (invocationCount == 0) {
 			if (!directoryCreated) {
 				std::filesystem::create_directories("data-" + datasetName);
@@ -876,8 +876,8 @@ namespace CaryonIO {
 	 *    caseNumber: 要执行的用例编号
 	 */
 	inline void executeStd(int caseNumber) {
-		freopen("CON.exe", "w", stdout);
-		freopen("CON.exe", "r", stdin);
+		freopen("CON", "w", stdout);
+		freopen("CON", "r", stdin);
 		std::stringstream aa;
 		std::string aaa;
 		aa << caseNumber;
@@ -899,8 +899,8 @@ namespace CaryonIO {
 	inline void executeRangeStd(int startIndex, int endIndex) {
 		for (int i = startIndex; i <= endIndex; ++i) {
 			executeStd(i);
-			freopen("CON.exe", "r", stdin);
-			freopen("CON.exe", "w", stdout);
+			freopen("CON", "r", stdin);
+			freopen("CON", "w", stdout);
 			std::stringstream _a;
 			std::string _i;
 			_a << i;
@@ -909,8 +909,8 @@ namespace CaryonIO {
 	}
 
 	inline void closeStreams() {
-		freopen("CON.exe", "w", stdout);
-		freopen("CON.exe", "r", stdin);
+		freopen("CON", "r", stdin);
+		freopen("CON", "w", stdout);
 	}
 
 	class CaseFileWriter {
@@ -976,45 +976,6 @@ namespace CaryonIO {
 	 */
 	inline void setMaxRuntimeGlobal(int t) { maxRuntimeMs = t; }
 
-	/**
-	 * batchGenerateCases
-	 * - 描述: 多线程批量生成测试用例文件，每个线程负责一段编号区间。
-	 * - 参数:
-	 *    cases: 总共要生成的用例数量（1...cases）
-	 *    generator: 功能对象，签名为 (int caseIndex, CaseFileWriter &writer)
-	 *    threads: 并发线程数（默认 1）
-	 *    baseName: 基础文件名（默认使用 datasetName）
-	 */
-	inline void batchGenerateCases(int cases, std::function<void(int, CaseFileWriter &)> generator, int threads = 1, const std::string &baseName = "") {
-		if (cases <= 0) return;
-		if (threads <= 0) threads = 1;
-		std::filesystem::path dir = outputDirectory.empty() ? std::filesystem::path("data-" + datasetName) : std::filesystem::path(outputDirectory);
-		std::filesystem::create_directories(dir);
-		auto worker = [&](int from, int to) {
-			for (int i = from; i <= to; ++i) {
-				CaseFileWriter writer;
-				writer.setBaseName(baseName.empty() ? datasetName : baseName);
-				writer.setOutputDir(dir.string());
-				if (!writer.openCase(i)) continue;
-				generator(i, writer);
-				writer.close();
-			}
-			};
-		int per = cases / threads;
-		int rem = cases % threads;
-		std::vector<std::thread> ths;
-		int cur = 1;
-		for (int t = 0; t < threads; ++t) {
-			int start = cur;
-			int cnt = per + (t < rem ? 1 : 0);
-			int end = start + cnt - 1;
-			if (cnt <= 0) break;
-			ths.emplace_back(worker, start, end);
-			cur = end + 1;
-		}
-		for (auto &t : ths) if (t.joinable()) t.join();
-	}
-
 	inline std::string getCaseInputPath(int idx, const std::string &baseName = "") {
 		std::string dir = outputDirectory.empty() ? ("data-" + datasetName) : outputDirectory;
 		std::string name = dir + "/" + (baseName.empty() ? datasetName : baseName) + std::to_string(idx) + ".in";
@@ -1027,174 +988,6 @@ namespace CaryonIO {
 		std::string outPath = dir + "/" + (baseName.empty() ? datasetName : baseName) + std::to_string(idx) + ".out";
 		std::string command = "\"" + exeName + "\" < \"" + inPath + "\" > \"" + outPath + "\"";
 		return system(command.c_str());
-	}
-
-	inline void runExecutablesParallel(int start, int end, const std::string &exeName = "test.exe", int threads = 1, const std::string &baseName = "") {
-		if (start > end) return;
-		if (threads <= 0) threads = 1;
-		int total = end - start + 1;
-		int per = total / threads;
-		int rem = total % threads;
-		std::vector<std::thread> ths;
-		int cur = start;
-		auto worker = [&](int s, int e) {
-			for (int i = s; i <= e; ++i) {
-				runExecutableOnCase(i, exeName, baseName);
-			}
-			};
-		for (int t = 0; t < threads; ++t) {
-			int cnt = per + (t < rem ? 1 : 0);
-			if (cnt <= 0) break;
-			int s = cur;
-			int e = cur + cnt - 1;
-			ths.emplace_back(worker, s, e);
-			cur = e + 1;
-		}
-		for (auto &th : ths) if (th.joinable()) th.join();
-	}
-
-	inline void generateAndRunCases(int cases, std::function<void(int, CaseFileWriter &)> generator, int genThreads = 1, int runThreads = 1, const std::string &exeName = "test.exe", const std::string &baseName = "") {
-		batchGenerateCases(cases, generator, genThreads, baseName);
-		runExecutablesParallel(1, cases, exeName, runThreads, baseName);
-	}
-
-	class FileCaseWriter {
-	private:
-		std::ofstream ofs;
-		int caseIndex;
-		std::string baseName;
-	public:
-		FileCaseWriter() : caseIndex(0) {}
-		void setBaseName(const std::string &name) { baseName = name; }
-		void setOutputDir(const std::string &dir) { outputDirectory = dir; }
-		bool openCase(int idx) {
-			caseIndex = idx;
-			try {
-				if (outputDirectory.empty()) {
-					std::string dir = "data-" + datasetName;
-					std::filesystem::create_directories(dir);
-					outputDirectory = dir;
-				}
-				std::string fname = outputDirectory + "/" + (baseName.empty() ? datasetName : baseName) + std::to_string(idx) + ".in";
-				ofs.open(fname, std::ios::out | std::ios::trunc);
-				return ofs.is_open();
-			} catch (...) {
-				return false;
-			}
-		}
-		template <typename T>
-		void write(const T &v) {
-			std::lock_guard<std::mutex> lk(caryon_io_mutex);
-			ofs << v;
-		}
-		void writeln(const std::string &s) {
-			std::lock_guard<std::mutex> lk(caryon_io_mutex);
-			ofs << s << '\n';
-		}
-		void close() {
-			std::lock_guard<std::mutex> lk(caryon_io_mutex);
-			if (ofs.is_open()) ofs.close();
-		}
-	};
-
-	/**
-	 * setDataName
-	 * - 描述: 设置全局数据集名称（用于生成文件夹与文件名）。
-	 * - 参数:
-	 *    name: 数据集名称字符串
-	 */
-	inline void setDataName(const std::string &name) { datasetName = name; }
-
-	/**
-	 * setOutputDir
-	 * - 描述: 设置输出目录（并尝试创建该目录）。
-	 * - 参数:
-	 *    dir: 输出目录路径
-	 */
-	inline void setOutputDir(const std::string &dir) { outputDirectory = dir; std::filesystem::create_directories(outputDirectory); }
-
-	/**
-	 * setMaxTimeGlobal
-	 * - 描述: 设置判定 TLE 使用的全局最大运行时间（毫秒）。
-	 * - 参数:
-	 *    t: 毫秒数
-	 */
-	inline void setMaxTimeGlobal(int t) { maxRuntimeMs = t; }
-
-	/**
-	 * batchGenerate
-	 * - 描述: 多线程批量生成测试用例文件，每个线程负责一段编号区间。
-	 * - 参数:
-	 *    cases: 总共要生成的用例数量（1..cases）
-	 *    generator: 功能对象，签名为 (int caseIndex, FileCaseWriter &writer)
-	 *    threads: 并发线程数（默认 1）
-	 *    baseName: 基础文件名（默认使用 datasetName）
-	 */
-	inline void batchGenerate(int cases, std::function<void(int, FileCaseWriter &)> generator, int threads = 1, const std::string &baseName = "") {
-		if (cases <= 0) return;
-		if (threads <= 0) threads = 1;
-		std::filesystem::path dir = outputDirectory.empty() ? std::filesystem::path("data-" + datasetName) : std::filesystem::path(outputDirectory);
-		std::filesystem::create_directories(dir);
-		auto worker = [&](int from, int to) {
-			for (int i = from; i <= to; ++i) {
-				FileCaseWriter writer;
-				writer.setBaseName(baseName.empty() ? datasetName : baseName);
-				writer.setOutputDir(dir.string());
-				if (!writer.openCase(i)) continue;
-				generator(i, writer);
-				writer.close();
-			}
-			};
-		int per = cases / threads;
-		int rem = cases % threads;
-		std::vector<std::thread> ths;
-		int cur = 1;
-		for (int t = 0; t < threads; ++t) {
-			int start = cur;
-			int cnt = per + (t < rem ? 1 : 0);
-			int end = start + cnt - 1;
-			if (cnt <= 0) break;
-			ths.emplace_back(worker, start, end);
-			cur = end + 1;
-		}
-		for (auto &t : ths) if (t.joinable()) t.join();
-	}
-
-	inline int runTestOnCase(int idx, const std::string &exeName = "test.exe", const std::string &baseName = "") {
-		std::string inPath = getCaseInputPath(idx, baseName);
-		std::string dir = outputDirectory.empty() ? ("data-" + datasetName) : outputDirectory;
-		std::string outPath = dir + "/" + (baseName.empty() ? datasetName : baseName) + std::to_string(idx) + ".out";
-		std::string command = "\"" + exeName + "\" < \"" + inPath + "\" > \"" + outPath + "\"";
-		return system(command.c_str());
-	}
-
-	inline void runTestsParallel(int start, int end, const std::string &exeName = "test.exe", int threads = 1, const std::string &baseName = "") {
-		if (start > end) return;
-		if (threads <= 0) threads = 1;
-		int total = end - start + 1;
-		int per = total / threads;
-		int rem = total % threads;
-		std::vector<std::thread> ths;
-		int cur = start;
-		auto worker = [&](int s, int e) {
-			for (int i = s; i <= e; ++i) {
-				runTestOnCase(i, exeName, baseName);
-			}
-			};
-		for (int t = 0; t < threads; ++t) {
-			int cnt = per + (t < rem ? 1 : 0);
-			if (cnt <= 0) break;
-			int s = cur;
-			int e = cur + cnt - 1;
-			ths.emplace_back(worker, s, e);
-			cur = e + 1;
-		}
-		for (auto &th : ths) if (th.joinable()) th.join();
-	}
-
-	inline void generateAndRun(int cases, std::function<void(int, FileCaseWriter &)> generator, int genThreads = 1, int runThreads = 1, const std::string &exeName = "test.exe", const std::string &baseName = "") {
-		batchGenerate(cases, generator, genThreads, baseName);
-		runTestsParallel(1, cases, exeName, runThreads, baseName);
 	}
 } // namespace CaryonIO
 
@@ -1210,6 +1003,7 @@ namespace CaryonDebug {
 	 *    endIndex: 结束编号
 	 */
 	void makeDebugFile(int startIndex, int endIndex) {
+		if (startIndex > endIndex) return;
 		std::string debugDir = "debug-" + datasetName;
 		std::filesystem::create_directories(debugDir);
 		runtimeLogStream.str("");
@@ -1247,6 +1041,7 @@ namespace CaryonDebug {
 	 *    endIndex: 结束编号
 	 */
 	void compareFile(int startIndex, int endIndex) {
+		if (startIndex > endIndex) return;
 		int acCount = 0;
 		std::ofstream logfile("Debug.log", std::ios::trunc);
 		if (!logfile.is_open()) {
