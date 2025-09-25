@@ -721,8 +721,8 @@ namespace CaryonGraph {
 	 * - 返回: 如果是树则返回 true
 	 */
 	template<typename T>
-	bool isTree(const CaryonGraph::Graph<T> &graph) {
-		return graph.isConnected() && graph.m == graph.n - 1;
+	bool isTree(CaryonGraph::Graph<T> graph) {
+		return graph.isConnected() && (graph.m == graph.n - 1);
 	}
 
 	/**
