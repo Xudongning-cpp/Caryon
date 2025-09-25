@@ -1,6 +1,15 @@
 #ifndef CARYON_H
 #define CARYON_H
 
+/*
+ * Caryon Header
+ * -------------
+ * 主要功能：
+ * - 随机数生成工具
+ * - 图结构及生成工具
+ * - 数据集生成/写入/运行/调试工具
+ */
+
 #include <cstring>
 #include <algorithm>
 #include <complex>
@@ -19,28 +28,21 @@
 #include <filesystem>
 #include <ctime>
 #include <cstdint>
+#include <atomic>
+#include <sstream>
+#include <iomanip>
+#include <chrono>
 
 #define makein(low, high) for (caseIndex = low, invocationCount = 0; caseIndex <= high; caseIndex++, invocationCount = 0)
-
 #define CarYon 4
 
-// 全局变量注释
-// datasetName: 用于生成测试数据时的基准数据集名称。
-// outputDirectory: 指定输出文件夹路径。
-// caseIndex: 当前要写入的测试用例编号（全局上下文）。
-// invocationCount: 同一用例内部被写入的次数计数器。
-// maxRuntimeMs: 判定 TLE 的全局最大运行时间限制（毫秒）。
-// runtimeMs: 记录当前运行时间（用于调试比较）。
-// directoryCreated: 标记输出目录是否已创建过。
-// runtimeLogStream: 运行时间日志流（调试用）。
-// caryon_io_mutex: IO 操作互斥锁，保证多线程写入安全。
 std::string datasetName;
 std::string outputDirectory;
-int caseIndex;
-int invocationCount;
-int maxRuntimeMs = 1000;
+std::atomic<int> caseIndex{ 0 };
+std::atomic<int> invocationCount{ 0 };
+std::atomic<int> maxRuntimeMs{ 1000 };
 long double runtimeMs;
-bool directoryCreated = false;
+std::atomic<bool> directoryCreated{ false };
 std::stringstream runtimeLogStream;
 std::mutex caryon_io_mutex;
 
@@ -61,11 +63,9 @@ namespace CaryonConstants {
 
 // CaryonRandom: 随机数据工具集合
 namespace CaryonRandom {
-	// randomInitialized: 标记 RNG 是否已初始化
-	// useStdMT: 如果为 true 则使用 std::mt19937_64，否则使用自定义“legacy”实现
 	bool randomInitialized = false;
 	bool useStdMT = true;
-	int legacyIndex;
+	int legacyIndex = 0;
 	long long legacyMT[624];
 	inline std::mt19937_64 rng64;
 
@@ -89,7 +89,7 @@ namespace CaryonRandom {
 	 */
 	void seedLegacy(int initialSeed) {
 		legacyIndex = 0;
-		randomInitialized = 1;
+		randomInitialized = true;
 		legacyMT[0] = initialSeed;
 		for (int i = 1; i < 624; i++) {
 			int t = 1812433253 * (legacyMT[i - 1] ^ (legacyMT[i - 1] >> 30)) + i;
@@ -97,13 +97,16 @@ namespace CaryonRandom {
 		}
 	}
 
-	// legacyGenerate: 生成 legacy MT 的下一批伪随机数（内部使用）
+	/*
+	* legacyGenerate
+	* - 生成 legacy MT 的下一批伪随机数（内部使用）
+	*/
 	inline void legacyGenerate() {
 		for (int i = 0; i < 624; i++) {
-			long long y = (legacyMT[i] & 0x80000000) + (legacyMT[(i + 1) % 624] & 0x7fffffff);
+			long long y = (legacyMT[i] & 0x80000000LL) + (legacyMT[(i + 1) % 624] & 0x7fffffffLL);
 			legacyMT[i] = legacyMT[(i + 397) % 624] ^ (y >> 1);
 			if (y % 2 == 1)
-				legacyMT[i] ^= 2147483647;
+				legacyMT[i] ^= 2147483647LL;
 		}
 	}
 
@@ -114,19 +117,19 @@ namespace CaryonRandom {
 	 */
 	inline int randInt() {
 		if (useStdMT) {
-			return (int)(rng64() & 0x7fffffff);
+			return static_cast<int>(rng64() & 0x7fffffff);
 		}
 		if (!randomInitialized)
-			seedLegacy((int)time(nullptr));
+			seedLegacy(static_cast<int>(time(nullptr)));
 		if (legacyIndex == 0)
 			legacyGenerate();
-		int y = legacyMT[legacyIndex];
+		int y = static_cast<int>(legacyMT[legacyIndex]);
 		y = y ^ (y >> 11);
 		y = y ^ ((y << 7) & 1636928640);
 		y = y ^ ((y << 15) & 1022730752);
 		y = y ^ (y >> 18);
 		legacyIndex = (legacyIndex + 1) % 624;
-		return y;
+		return y & 0x7fffffff;
 	}
 
 	/**
@@ -135,9 +138,9 @@ namespace CaryonRandom {
 	 */
 	inline long long randLong() {
 		if (useStdMT) {
-			return (long long)rng64();
+			return static_cast<long long>(rng64());
 		}
-		return ((long long)(randInt()) << 31) + randInt();
+		return ((static_cast<long long>(randInt()) << 31) + randInt());
 	}
 
 	/**
@@ -148,13 +151,11 @@ namespace CaryonRandom {
 	 *    high: 上界（包含）
 	 */
 	inline int randInt(int low, int high) {
-		if (low > high)
-			low = high;
-		if (low == high)
-			return low;
+		if (low > high) throw std::invalid_argument("randInt(low, high): low > high");
+		if (low == high) return low;
 		if (useStdMT) {
 			uint64_t r = rng64();
-			return (int)(r % (uint64_t)(high - low + 1) + low);
+			return static_cast<int>(r % (uint64_t)(high - low + 1) + low);
 		}
 		else
 			return randInt() % (high - low + 1) + low;
@@ -168,13 +169,11 @@ namespace CaryonRandom {
 	 *    high: 上界（包含）
 	 */
 	inline long long randLong(long long low, long long high) {
-		if (low > high)
-			low = high;
-		if (low == high)
-			return low;
+		if (low > high) throw std::invalid_argument("randLong(low, high): low > high");
+		if (low == high) return low;
 		if (useStdMT) {
 			uint64_t r = rng64();
-			return (long long)(r % (uint64_t)(high - low + 1) + low);
+			return static_cast<long long>(r % (uint64_t)(high - low + 1) + low);
 		}
 		else
 			return randLong() % (high - low + 1) + low;
@@ -189,7 +188,7 @@ namespace CaryonRandom {
 	 *    first: 区间起始迭代器（包含）
 	 *    last: 区间结束迭代器（不包含）
 	 */
-	template < typename It >
+	template <typename It>
 	inline void shuffleRange(It first, It last) {
 		if (useStdMT) {
 			std::shuffle(first, last, rng64);
@@ -197,7 +196,7 @@ namespace CaryonRandom {
 		else {
 			auto n = std::distance(first, last);
 			for (decltype(n) i = n - 1; i > 0; --i) {
-				auto j = randInt(0, (int)i);
+				auto j = randInt(0, static_cast<int>(i));
 				using std::iter_swap;
 				iter_swap(first + i, first + j);
 			}
@@ -212,9 +211,7 @@ namespace CaryonRandom {
 	 *    length: 要生成的排列长度
 	 */
 	inline void randPermutation(int *outArray, int length) {
-		for (int i = 0; i < length; i++) {
-			outArray[i] = i + 1;
-		}
+		for (int i = 0; i < length; i++) outArray[i] = i + 1;
 		for (int i = length - 1; i > 0; --i) {
 			int j = randInt(0, i);
 			std::swap(outArray[i], outArray[j]);
@@ -229,7 +226,7 @@ namespace CaryonRandom {
 		if (useStdMT) {
 			return std::uniform_real_distribution<double>(0.0, 1.0)(rng64);
 		}
-		return (double)(randInt()) / (double)0x7fffffff;
+		return static_cast<double>(randInt()) / static_cast<double>(0x7fffffff);
 	}
 
 	/**
@@ -240,13 +237,7 @@ namespace CaryonRandom {
 	 */
 	inline void seedAllRNG(unsigned long long seedValue) {
 		seedStd(seedValue);
-		legacyIndex = 0;
-		legacyMT[0] = (long long)(seedValue & 0xffffffff);
-		for (int i = 1; i < 624; ++i) {
-			int t = 1812433253 * (legacyMT[i - 1] ^ (legacyMT[i - 1] >> 30)) + i;
-			legacyMT[i] = t & 0xffffffff;
-		}
-		randomInitialized = true;
+		seedLegacy(static_cast<int>(seedValue & 0xffffffff));
 	}
 
 	/**
@@ -275,11 +266,7 @@ namespace CaryonRandom {
 	inline std::vector<int> sampleUniqueRange(int minValue, int maxValue, int count) {
 		int range = maxValue - minValue + 1;
 		if (count <= 0) return {};
-		if (count >= range) {
-			std::vector<int> all(range);
-			for (int i = 0; i < range; ++i) all[i] = minValue + i;
-			return all;
-		}
+		if (count > range) throw std::invalid_argument("sampleUniqueRange: count > range");
 		std::vector<int> pool(range);
 		for (int i = 0; i < range; ++i) pool[i] = minValue + i;
 		for (int i = 0; i < count; ++i) {
@@ -301,7 +288,7 @@ namespace CaryonRandom {
 		std::string result;
 		result.reserve(length);
 		for (int i = 0; i < length; ++i) {
-			result += charset[CaryonRandom::randInt(0, charset.size() - 1)];
+			result += charset[randInt(0, static_cast<int>(charset.size()) - 1)];
 		}
 		return result;
 	}
@@ -329,12 +316,12 @@ namespace CaryonRandom {
 		std::string result(length, ' ');
 		int half = length / 2;
 		for (int i = 0; i < half; ++i) {
-			char c = charset[CaryonRandom::randInt(0, charset.size() - 1)];
+			char c = charset[randInt(0, static_cast<int>(charset.size()) - 1)];
 			result[i] = c;
 			result[length - 1 - i] = c;
 		}
 		if (length % 2 == 1) {
-			result[half] = charset[CaryonRandom::randInt(0, charset.size() - 1)];
+			result[half] = charset[randInt(0, static_cast<int>(charset.size()) - 1)];
 		}
 		return result;
 	}
@@ -348,12 +335,12 @@ namespace CaryonRandom {
 	 */
 	inline std::string shuffleString(const std::string &s) {
 		std::vector<char> chars(s.begin(), s.end());
-		CaryonRandom::shuffleRange(chars.begin(), chars.end());
+		shuffleRange(chars.begin(), chars.end());
 		return std::string(chars.begin(), chars.end());
 	}
 } // namespace CaryonRandom
 
-// CaryonGraph: 基本图结构与生成器
+// CaryonGraph: 图结构与生成器
 namespace CaryonGraph {
 	/**
 	 * Edge<T>
@@ -362,10 +349,10 @@ namespace CaryonGraph {
 	 *    v: 目标顶点编号
 	 *    w: 边的权重（模板类型）
 	 */
-	template <typename T>
+	template <typename Type>
 	struct Edge {
 		int v;
-		T w;
+		Type w;
 		bool operator<(const Edge &rw) const {
 			return w > rw.w;
 		}
@@ -375,9 +362,9 @@ namespace CaryonGraph {
 	 * Adjacency<T>
 	 * - 描述: 邻接表项，包含若干边。
 	 */
-	template <typename T>
+	template <typename Type>
 	struct Adjacency {
-		std::vector< Edge<T> > edges;
+		std::vector< Edge<Type> > edges;
 	};
 
 	/**
@@ -388,10 +375,10 @@ namespace CaryonGraph {
 	 *    m: 边数
 	 *    adj: 邻接表（按索引存储 Adjacency）
 	 */
-	template <typename T>
+	template <typename Type>
 	struct Graph {
 		int n = 0, m = 0;
-		std::vector< Adjacency<T> > adj;
+		std::vector< Adjacency<Type> > adj;
 		Graph() {}
 
 		/**
@@ -401,9 +388,9 @@ namespace CaryonGraph {
 		 *    targetIndex: 需要确保的最大索引
 		 */
 		void ensureSize(int targetIndex) {
-			Adjacency<T> updatemp;
+			Adjacency<Type> updatemp;
 			updatemp.edges.clear();
-			while (adj.size() <= targetIndex) adj.push_back(updatemp);
+			while ((int)adj.size() <= targetIndex) adj.push_back(updatemp);
 		}
 
 		/**
@@ -414,14 +401,14 @@ namespace CaryonGraph {
 		 *    to: 边的目标顶点编号
 		 *    weight: 边的权重
 		 */
-		void addEdge(int from, int to, T weight) {
+		void addEdge(int from, int to, Type weight) {
+			if (from <= 0 || to <= 0) return;
+			if (from == to) return;
+			ensureSize(std::max(from, to));
 			n = std::max(n, from);
 			n = std::max(n, to);
-			ensureSize(std::max(from, to));
 			m++;
-			Edge<T> tmp;
-			tmp.v = to;
-			tmp.w = weight;
+			Edge<Type> tmp{ to, weight };
 			adj[from].edges.push_back(tmp);
 		}
 
@@ -431,50 +418,62 @@ namespace CaryonGraph {
 		 * - 返回: 若图的所有顶点都可达则返回 true。
 		 */
 		bool isConnected() {
+			if (n == 0) return true;
 			const int vstsize = n + 1;
 			int vstn = 0;
 			std::vector<bool> visited(vstsize, false);
 			std::queue<int> q;
-			int start = CaryonRandom::randInt(1, n);
+			int start = 1;
+			for (int i = 1; i <= n; ++i) {
+				if (!adj[i].edges.empty()) {
+					start = i;
+					break;
+				}
+			}
 			visited[start] = true;
 			vstn = 1;
 			q.push(start);
 			while (!q.empty()) {
 				int cur = q.front();
 				q.pop();
-				for (int i = 0; i < adj[cur].edges.size(); i++) {
-					if (!visited[adj[cur].edges[i].v]) {
-						visited[adj[cur].edges[i].v] = true;
+				for (const auto &e : adj[cur].edges) {
+					if (!visited[e.v]) {
+						visited[e.v] = true;
 						vstn++;
-						q.push(adj[cur].edges[i].v);
+						q.push(e.v);
 					}
 				}
 			}
-			return (vstn == n);
+			for (int i = 1; i <= n; ++i) {
+				if (!adj[i].edges.empty() && !visited[i]) return false;
+			}
+			return true;
 		}
 	};
 
-	template <typename T>
-	std::ostream &operator<<(std::ostream &os, const Graph<T> &c) {
+	// 图输出流
+	template <typename Type>
+	std::ostream &operator<<(std::ostream &os, const Graph<Type> &c) {
 		os << c.n << ' ' << c.m << '\n';
 		for (int i = 1; i <= c.n; i++) {
-			for (int j = 0; j < c.adj[i].edges.size(); j++)
-				os << i << ' ' << c.adj[i].edges[j].v << ' ' << c.adj[i].edges[j].w << '\n';
+			for (const auto &edge : c.adj[i].edges)
+				os << i << ' ' << edge.v << ' ' << edge.w << '\n';
 		}
 		return os;
 	}
 
-	template <typename T>
-	Graph<T> operator+(Graph<T> a, Graph<T> b) {
-		Graph<T> ret;
-		ret = a;
-		ret.m = a.m + b.m;
-		ret.ensureSize(ret.n);
+	// 图合并
+	template <typename Type>
+	Graph<Type> operator+(Graph<Type> a, Graph<Type> b) {
+		Graph<Type> ret = a;
+		ret.ensureSize(std::max(a.n, b.n));
 		for (int i = 1; i <= b.n; i++) {
-			for (int j = 0; j < b.adj[i].edges.size(); j++) {
-				ret.adj[i].edges.push_back(b.adj[i].edges[j]);
+			for (const auto &edge : b.adj[i].edges) {
+				ret.addEdge(i, edge.v, edge.w);
 			}
 		}
+		ret.n = std::max(a.n, b.n);
+		ret.m = a.m + b.m;
 		return ret;
 	}
 
@@ -488,24 +487,30 @@ namespace CaryonGraph {
 	 *    maxWeight: 权重最大值
 	 *    randValueFunc: 从 [minWeight, maxWeight] 返回一个随机权重的函数指针
 	 */
-	template <typename T>
-	Graph<T> randGraph(int nodeCount, int edgeCount, T minWeight, T maxWeight, T(*randValueFunc)(T, T)) {
-		Graph<T> ret;
+	template <typename Type>
+	Graph<Type> randGraph(int nodeCount, int edgeCount, Type minWeight, Type maxWeight, Type(*randValueFunc)(Type, Type)) {
+		Graph<Type> ret;
 		ret.n = nodeCount;
-		ret.m = edgeCount;
 		ret.ensureSize(nodeCount);
-		for (int i = 1; i <= edgeCount; i++) {
-			Edge<T> tmp;
-			tmp.v = CaryonRandom::randInt(1, nodeCount);
-			tmp.w = randValueFunc(minWeight, maxWeight);
-			ret.adj[CaryonRandom::randInt(1, nodeCount)].edges.push_back(tmp);
+		std::unordered_set<uint64_t> edge_set;
+		int edges_added = 0;
+		auto encode = [](int u, int v) { return ((uint64_t)u << 32) | v; };
+		while (edges_added < edgeCount) {
+			int u = CaryonRandom::randInt(1, nodeCount);
+			int v = CaryonRandom::randInt(1, nodeCount);
+			if (u == v) continue;
+			if (edge_set.count(encode(u, v))) continue;
+			edge_set.insert(encode(u, v));
+			ret.addEdge(u, v, randValueFunc(minWeight, maxWeight));
+			edges_added++;
 		}
+		ret.m = edges_added;
 		return ret;
 	}
 
 	/**
 	 * randDAG
-	 * - 描述: 随机生成有向无环图（DAG）。
+	 * - 描述: 随机生成有向无环图。
 	 * - 参数:
 	 *    nodeCount: 顶点数量
 	 *    edgeCount: 边数量
@@ -513,19 +518,25 @@ namespace CaryonGraph {
 	 *    maxWeight: 权重最大值
 	 *    randValueFunc: 随机权重生成函数
 	 */
-	template <typename T>
-	Graph<T> randDAG(int nodeCount, int edgeCount, T minWeight, T maxWeight, T(*randValueFunc)(T, T)) {
-		Graph<T> ret;
-		ret.ensureSize(nodeCount);
+	template <typename Type>
+	Graph<Type> randDAG(int nodeCount, int edgeCount, Type minWeight, Type maxWeight, Type(*randValueFunc)(Type, Type)) {
+		Graph<Type> ret;
+		if (nodeCount < 2) return ret;
 		ret.n = nodeCount;
-		ret.m = edgeCount;
-		for (int i = 1; i <= edgeCount; i++) {
-			Edge< T > tmp;
-			int utmp = CaryonRandom::randInt(1, CaryonRandom::randInt(1, nodeCount - 1));
-			tmp.v = CaryonRandom::randInt(utmp + 1, nodeCount);
-			tmp.w = randValueFunc(minWeight, maxWeight);
-			ret.adj[utmp].edges.push_back(tmp);
+		ret.ensureSize(nodeCount);
+		std::unordered_set<uint64_t> edge_set;
+		int edges_added = 0;
+		auto encode = [](int u, int v) { return ((uint64_t)u << 32) | v; };
+		while (edges_added < edgeCount) {
+			int u = CaryonRandom::randInt(1, nodeCount - 1);
+			int v = CaryonRandom::randInt(u + 1, nodeCount);
+			if (u >= v) continue;
+			if (edge_set.count(encode(u, v))) continue;
+			edge_set.insert(encode(u, v));
+			ret.addEdge(u, v, randValueFunc(minWeight, maxWeight));
+			edges_added++;
 		}
+		ret.m = edges_added;
 		return ret;
 	}
 
@@ -544,11 +555,11 @@ namespace CaryonGraph {
 	 *    maxWeight: 权重最大值
 	 *    randValueFunc: 随机权重生成函数
 	 */
-	template < typename T >
-	Graph<T> randTree(int nodeCount, int maxChildren, T minWeight, T maxWeight, T(*randValueFunc)(T, T)) {
-		Graph<T> ret;
+	template <typename Type>
+	Graph<Type> randTree(int nodeCount, int maxChildren, Type minWeight, Type maxWeight, Type(*randValueFunc)(Type, Type)) {
+		Graph<Type> ret;
+		if (nodeCount == 0) return ret;
 		ret.n = nodeCount;
-		ret.m = nodeCount - 1;
 		ret.ensureSize(nodeCount);
 		std::vector<CaryonNode> t;
 		std::vector<int> nodes;
@@ -560,17 +571,15 @@ namespace CaryonGraph {
 		t.push_back(updatemp);
 		for (int j = 2; j <= nodeCount; j++) {
 			int i = nodes[j - 1];
-			std::swap(t[CaryonRandom::randInt(0, t.size() - 1)], t[t.size() - 1]);
-			t[t.size() - 1].sonCount++;
-			if (t[t.size() - 1].sonCount == maxChildren) t.pop_back();
-			Edge<T> tmp;
-			tmp.v = t[t.size() - 1].id;
-			tmp.w = randValueFunc(minWeight, maxWeight);
-			ret.adj[i].edges.push_back(tmp);
+			std::swap(t[CaryonRandom::randInt(0, static_cast<int>(t.size()) - 1)], t[t.size() - 1]);
+			t.back().sonCount++;
+			if (t.back().sonCount == maxChildren) t.pop_back();
+			ret.addEdge(i, t.back().id, randValueFunc(minWeight, maxWeight));
 			updatemp.id = i;
 			updatemp.sonCount = 0;
 			t.push_back(updatemp);
 		}
+		ret.m = nodeCount - 1;
 		return ret;
 	}
 
@@ -584,9 +593,9 @@ namespace CaryonGraph {
 	 *    randValueFunc: 权重生成函数
 	 * - 返回: 完全图
 	 */
-	template<typename T>
-	CaryonGraph::Graph<T> completeGraph(int nodeCount, T minWeight, T maxWeight, T(*randValueFunc)(T, T)) {
-		CaryonGraph::Graph<T> graph;
+	template<typename Type>
+	Graph<Type> completeGraph(int nodeCount, Type minWeight, Type maxWeight, Type(*randValueFunc)(Type, Type)) {
+		Graph<Type> graph;
 		graph.n = nodeCount;
 		graph.ensureSize(nodeCount);
 		for (int i = 1; i <= nodeCount; ++i) {
@@ -595,6 +604,7 @@ namespace CaryonGraph {
 				graph.addEdge(j, i, randValueFunc(minWeight, maxWeight));
 			}
 		}
+		graph.m = nodeCount * (nodeCount - 1);
 		return graph;
 	}
 
@@ -610,9 +620,9 @@ namespace CaryonGraph {
 	 *    randValueFunc: 权重生成函数
 	 * - 返回: 二分图
 	 */
-	template<typename T>
-	CaryonGraph::Graph<T> bipartiteGraph(int leftSize, int rightSize, int edgeCount, T minWeight, T maxWeight, T(*randValueFunc)(T, T)) {
-		CaryonGraph::Graph<T> graph;
+	template<typename Type>
+	Graph<Type> bipartiteGraph(int leftSize, int rightSize, int edgeCount, Type minWeight, Type maxWeight, Type(*randValueFunc)(Type, Type)) {
+		Graph<Type> graph;
 		graph.n = leftSize + rightSize;
 		graph.ensureSize(graph.n);
 		std::vector<std::pair<int, int>> edges;
@@ -622,11 +632,12 @@ namespace CaryonGraph {
 			}
 		}
 		CaryonRandom::shuffleRange(edges.begin(), edges.end());
-		if (edgeCount > edges.size()) edgeCount = edges.size();
+		edgeCount = std::min(edgeCount, static_cast<int>(edges.size()));
 		for (int i = 0; i < edgeCount; ++i) {
 			auto [u, v] = edges[i];
 			graph.addEdge(u, v, randValueFunc(minWeight, maxWeight));
 		}
+		graph.m = edgeCount;
 		return graph;
 	}
 
@@ -641,9 +652,9 @@ namespace CaryonGraph {
 	 *    randValueFunc: 权重生成函数
 	 * - 返回: 网格图
 	 */
-	template<typename T>
-	CaryonGraph::Graph<T> gridGraph(int rows, int cols, T minWeight, T maxWeight, T(*randValueFunc)(T, T)) {
-		CaryonGraph::Graph<T> graph;
+	template<typename Type>
+	Graph<Type> gridGraph(int rows, int cols, Type minWeight, Type maxWeight, Type(*randValueFunc)(Type, Type)) {
+		Graph<Type> graph;
 		graph.n = rows * cols;
 		graph.ensureSize(graph.n);
 		auto id = [&](int r, int c) { return r * cols + c + 1; };
@@ -673,43 +684,59 @@ namespace CaryonGraph {
 	 *    randValueFunc: 权重生成函数
 	 * - 返回: 连通图
 	 */
-	template<typename T>
-	CaryonGraph::Graph<T> connectedGraph(int nodeCount, int edgeCount, T minWeight, T maxWeight, T(*randValueFunc)(T, T)) {
+	template<typename Type>
+	Graph<Type> connectedGraph(int nodeCount, int edgeCount, Type minWeight, Type maxWeight, Type(*randValueFunc)(Type, Type)) {
 		if (edgeCount < nodeCount - 1) edgeCount = nodeCount - 1;
-		auto tree = CaryonGraph::randTree(nodeCount, nodeCount - 1, minWeight, maxWeight, randValueFunc);
+		auto tree = randTree(nodeCount, nodeCount - 1, minWeight, maxWeight, randValueFunc);
+		std::unordered_set<uint64_t> edge_set;
+		auto encode = [](int u, int v) { return ((uint64_t)u << 32) | v; };
+		for (int i = 1; i <= tree.n; ++i)
+			for (const auto &e : tree.adj[i].edges)
+				edge_set.insert(encode(i, e.v));
 		int remainingEdges = edgeCount - (nodeCount - 1);
-		for (int i = 0; i < remainingEdges; ++i) {
+		int added = 0;
+		while (added < remainingEdges) {
 			int u = CaryonRandom::randInt(1, nodeCount);
 			int v = CaryonRandom::randInt(1, nodeCount);
 			if (u == v) continue;
+			if (edge_set.count(encode(u, v))) continue;
 			tree.addEdge(u, v, randValueFunc(minWeight, maxWeight));
+			edge_set.insert(encode(u, v));
+			added++;
 		}
+		tree.m = edgeCount;
 		return tree;
 	}
 
-	// 生成链状树
-	template<typename T>
-	Graph<T> randChain(int nodeCount, T minWeight, T maxWeight, T(*randFunc)(T, T)) {
-		Graph<T> ret;
+	/**
+	 * randChain
+	 * - 生成链状树
+	 */
+	template<typename Type>
+	Graph<Type> randChain(int nodeCount, Type minWeight, Type maxWeight, Type(*randFunc)(Type, Type)) {
+		Graph<Type> ret;
 		ret.n = nodeCount;
-		ret.m = nodeCount - 1;
 		ret.ensureSize(nodeCount);
 		for (int i = 2; i <= nodeCount; ++i) {
 			ret.addEdge(i - 1, i, randFunc(minWeight, maxWeight));
 		}
+		ret.m = nodeCount - 1;
 		return ret;
 	}
 
-	// 生成菊花图
-	template<typename T>
-	Graph<T> randStar(int nodeCount, T minWeight, T maxWeight, T(*randFunc)(T, T)) {
-		Graph<T> ret;
+	/**
+	 * randStar
+	 * - 生成菊花图
+	 */
+	template<typename Type>
+	Graph<Type> randStar(int nodeCount, Type minWeight, Type maxWeight, Type(*randFunc)(Type, Type)) {
+		Graph<Type> ret;
 		ret.n = nodeCount;
-		ret.m = nodeCount - 1;
 		ret.ensureSize(nodeCount);
 		for (int i = 2; i <= nodeCount; ++i) {
 			ret.addEdge(1, i, randFunc(minWeight, maxWeight));
 		}
+		ret.m = nodeCount - 1;
 		return ret;
 	}
 
@@ -720,8 +747,8 @@ namespace CaryonGraph {
 	 *    graph: 要验证的图对象
 	 * - 返回: 如果是树则返回 true
 	 */
-	template<typename T>
-	bool isTree(CaryonGraph::Graph<T> graph) {
+	template<typename Type>
+	bool isTree(Graph<Type> graph) {
 		return graph.isConnected() && (graph.m == graph.n - 1);
 	}
 
@@ -732,8 +759,8 @@ namespace CaryonGraph {
 	 *    graph: 要验证的图对象
 	 * - 返回: 如果是 DAG 则返回 true
 	 */
-	template<typename T>
-	bool isDAG(const CaryonGraph::Graph<T> &graph) {
+	template<typename Type>
+	bool isDAG(const Graph<Type> &graph) {
 		std::vector<int> indegree(graph.n + 1, 0);
 		for (int i = 1; i <= graph.n; ++i) {
 			for (const auto &e : graph.adj[i].edges) {
@@ -764,8 +791,8 @@ namespace CaryonGraph {
 	 *    graph: 要检测的图对象
 	 * - 返回: 如果存在重复边则返回 true
 	 */
-	template<typename T>
-	bool hasDuplicateEdges(const CaryonGraph::Graph<T> &graph) {
+	template<typename Type>
+	bool hasDuplicateEdges(const Graph<Type> &graph) {
 		for (int i = 1; i <= graph.n; ++i) {
 			std::unordered_set<int> targets;
 			for (const auto &e : graph.adj[i].edges) {
@@ -787,14 +814,14 @@ namespace CaryonIO {
 	 */
 	template <typename T>
 	inline void writeGraphCase(CaryonGraph::Graph<T> graph) {
+		std::lock_guard<std::mutex> lk(caryon_io_mutex);
 		std::stringstream cci;
-		std::string tnmp;
 		if (invocationCount == 0) {
 			if (!directoryCreated) {
 				std::filesystem::create_directories("data-" + datasetName);
 				directoryCreated = true;
 			}
-			cci << caseIndex;
+			cci << std::setw(3) << std::setfill('0') << caseIndex;
 			std::string name = "data-" + datasetName + "/" + datasetName + cci.str() + ".in";
 			freopen(name.c_str(), "w", stdout);
 			freopen(name.c_str(), "r", stdin);
@@ -811,14 +838,14 @@ namespace CaryonIO {
 	 */
 	template <typename T>
 	inline void writeCase(const T &value) {
-		std::string c, tnmp;
+		std::lock_guard<std::mutex> lk(caryon_io_mutex);
 		std::stringstream cci;
 		if (invocationCount == 0) {
 			if (!directoryCreated) {
 				std::filesystem::create_directories("data-" + datasetName);
 				directoryCreated = true;
 			}
-			cci << caseIndex;
+			cci << std::setw(3) << std::setfill('0') << caseIndex;
 			std::string name = "data-" + datasetName + "/" + datasetName + cci.str() + ".in";
 			freopen(name.c_str(), "w", stdout);
 			freopen(name.c_str(), "r", stdin);
@@ -832,14 +859,14 @@ namespace CaryonIO {
 	 * - 描述: 将一个空格符写入当前测试用例。
 	 */
 	inline void writeSpace() {
+		std::lock_guard<std::mutex> lk(caryon_io_mutex);
 		std::stringstream cci;
-		std::string tnmp;
 		if (invocationCount == 0) {
 			if (!directoryCreated) {
 				std::filesystem::create_directories("data-" + datasetName);
 				directoryCreated = true;
 			}
-			cci << caseIndex;
+			cci << std::setw(3) << std::setfill('0') << caseIndex;
 			std::string name = "data-" + datasetName + "/" + datasetName + cci.str() + ".in";
 			freopen(name.c_str(), "w", stdout);
 			freopen(name.c_str(), "r", stdin);
@@ -853,14 +880,14 @@ namespace CaryonIO {
 	 * - 描述: 将一个换行符写入当前测试用例。
 	 */
 	inline void writeEndl() {
+		std::lock_guard<std::mutex> lk(caryon_io_mutex);
 		std::stringstream cci;
-		std::string tnmp;
 		if (invocationCount == 0) {
 			if (!directoryCreated) {
 				std::filesystem::create_directories("data-" + datasetName);
 				directoryCreated = true;
 			}
-			cci << caseIndex;
+			cci << std::setw(3) << std::setfill('0') << caseIndex;
 			std::string name = "data-" + datasetName + "/" + datasetName + cci.str() + ".in";
 			freopen(name.c_str(), "w", stdout);
 			freopen(name.c_str(), "r", stdin);
@@ -876,15 +903,14 @@ namespace CaryonIO {
 	 *    caseNumber: 要执行的用例编号
 	 */
 	inline void executeStd(int caseNumber) {
+		std::lock_guard<std::mutex> lk(caryon_io_mutex);
 		freopen("CON", "w", stdout);
 		freopen("CON", "r", stdin);
 		std::stringstream aa;
-		std::string aaa;
-		aa << caseNumber;
-		aa >> aaa;
-		std::string name = "data-" + datasetName + "/" + datasetName + aaa + ".in";
+		aa << std::setw(3) << std::setfill('0') << caseNumber;
+		std::string name = "data-" + datasetName + "/" + datasetName + aa.str() + ".in";
 		freopen(name.c_str(), "r", stdin);
-		std::string outname = "data-" + datasetName + "/" + datasetName + aaa + ".out";
+		std::string outname = "data-" + datasetName + "/" + datasetName + aa.str() + ".out";
 		freopen(outname.c_str(), "w", stdout);
 		system("std.exe");
 	}
@@ -901,18 +927,23 @@ namespace CaryonIO {
 			executeStd(i);
 			freopen("CON", "r", stdin);
 			freopen("CON", "w", stdout);
-			std::stringstream _a;
-			std::string _i;
-			_a << i;
-			_a >> _i;
 		}
 	}
 
+	/**
+	 * closeStreams
+	 * - 描述: 恢复标准输入输出流。
+	 */
 	inline void closeStreams() {
+		std::lock_guard<std::mutex> lk(caryon_io_mutex);
 		freopen("CON", "r", stdin);
 		freopen("CON", "w", stdout);
 	}
 
+	/**
+	 * CaseFileWriter
+	 * - 描述: 线程安全的文件写入器，支持按用例编号写入文件。
+	 */
 	class CaseFileWriter {
 	private:
 		std::ofstream ofs;
@@ -930,7 +961,10 @@ namespace CaryonIO {
 					std::filesystem::create_directories(dir);
 					outputDirectory = dir;
 				}
-				std::string fname = outputDirectory + "/" + (baseName.empty() ? datasetName : baseName) + std::to_string(idx) + ".in";
+				std::stringstream aa;
+				aa << std::setw(3) << std::setfill('0') << idx;
+				std::string fname = outputDirectory + "/" + (baseName.empty() ? datasetName : baseName) +
+					aa.str() + ".in";
 				ofs.open(fname, std::ios::out | std::ios::trunc);
 				return ofs.is_open();
 			} catch (...) {
@@ -966,7 +1000,10 @@ namespace CaryonIO {
 	 * - 参数:
 	 *    dir: 输出目录路径
 	 */
-	inline void setOutputDirectory(const std::string &dir) { outputDirectory = dir; std::filesystem::create_directories(outputDirectory); }
+	inline void setOutputDirectory(const std::string &dir) {
+		outputDirectory = dir;
+		std::filesystem::create_directories(outputDirectory);
+	}
 
 	/**
 	 * setMaxRuntimeGlobal
@@ -976,22 +1013,44 @@ namespace CaryonIO {
 	 */
 	inline void setMaxRuntimeGlobal(int t) { maxRuntimeMs = t; }
 
+	/**
+	 * getCaseInputPath
+	 * - 描述: 获取指定编号用例的输入文件路径。
+	 * - 参数:
+	 *    idx: 用例编号
+	 *    baseName: 可选基础文件名
+	 */
 	inline std::string getCaseInputPath(int idx, const std::string &baseName = "") {
 		std::string dir = outputDirectory.empty() ? ("data-" + datasetName) : outputDirectory;
-		std::string name = dir + "/" + (baseName.empty() ? datasetName : baseName) + std::to_string(idx) + ".in";
+		std::stringstream aa;
+		aa << std::setw(3) << std::setfill('0') << idx;
+		std::string name = dir + "/" + (baseName.empty() ? datasetName : baseName) +
+			aa.str() + ".in";
 		return name;
 	}
 
+	/**
+	 * runExecutableOnCase
+	 * - 描述: 在指定用例上运行可执行程序。
+	 * - 参数:
+	 *    idx: 用例编号
+	 *    exeName: 可执行文件名
+	 *    baseName: 可选基础文件名
+	 * - 返回: 系统调用返回值
+	 */
 	inline int runExecutableOnCase(int idx, const std::string &exeName = "test.exe", const std::string &baseName = "") {
 		std::string inPath = getCaseInputPath(idx, baseName);
 		std::string dir = outputDirectory.empty() ? ("data-" + datasetName) : outputDirectory;
-		std::string outPath = dir + "/" + (baseName.empty() ? datasetName : baseName) + std::to_string(idx) + ".out";
+		std::stringstream aa;
+		aa << std::setw(3) << std::setfill('0') << idx;
+		std::string outPath = dir + "/" + (baseName.empty() ? datasetName : baseName) +
+			aa.str() + ".out";
 		std::string command = "\"" + exeName + "\" < \"" + inPath + "\" > \"" + outPath + "\"";
 		return system(command.c_str());
 	}
 } // namespace CaryonIO
 
-// CaryonDebug: 用于生成调试输出、比较输出结果等
+// CaryonDebug: 调试与输出比较
 namespace CaryonDebug {
 	std::stringstream __re;
 
@@ -1016,19 +1075,20 @@ namespace CaryonDebug {
 			return;
 		}
 		for (int i = startIndex; i <= endIndex; ++i) {
-			std::string indexStr = std::to_string(i);
-			std::string debugAnsPath = debugDir + "/" + datasetName + indexStr + ".ans";
-			std::string inputPath = "data-" + datasetName + "/" + datasetName + indexStr + ".in";
+			std::stringstream aa;
+			aa << std::setw(3) << std::setfill('0') << i;
+			std::string debugAnsPath = debugDir + "/" + datasetName + aa.str() + ".ans";
+			std::string inputPath = "data-" + datasetName + "/" + datasetName + aa.str() + ".in";
 			if (!std::filesystem::exists(inputPath)) {
 				std::cerr << "Input file not found" << std::endl;
 				continue;
 			}
 			std::string command = executable + " < \"" + inputPath + "\" > \"" + debugAnsPath + "\"";
-			long double clock1 = clock();
+			auto clock1 = std::chrono::high_resolution_clock::now();
 			int returnCode = system(command.c_str());
-			long double clock2 = clock();
+			auto clock2 = std::chrono::high_resolution_clock::now();
 			__re << returnCode << std::endl;
-			runtimeMs = (clock2 - clock1) * 1000.0 / CLOCKS_PER_SEC;
+			runtimeMs = std::chrono::duration<long double, std::milli>(clock2 - clock1).count();
 			runtimeLogStream << runtimeMs << std::endl;
 		}
 	}
@@ -1055,9 +1115,10 @@ namespace CaryonDebug {
 		runtimeLogStream.seekg(0);
 		__re.seekg(0);
 		for (int i = startIndex; i <= endIndex; i++) {
-			std::string indexStr = std::to_string(i);
-			std::string ansPath = "debug-" + datasetName + "/" + datasetName + indexStr + ".ans";
-			std::string outPath = "data-" + datasetName + "/" + datasetName + indexStr + ".out";
+			std::stringstream aa;
+			aa << std::setw(3) << std::setfill('0') << i;
+			std::string ansPath = "debug-" + datasetName + "/" + datasetName + aa.str() + ".ans";
+			std::string outPath = "data-" + datasetName + "/" + datasetName + aa.str() + ".out";
 			if (!std::filesystem::exists(ansPath)) {
 				logfile << "Answer file not found.\n";
 				continue;
@@ -1076,8 +1137,12 @@ namespace CaryonDebug {
 			std::string ansLine, outLine;
 			int lineNum = 1;
 			while (std::getline(ansFile, ansLine) && std::getline(outFile, outLine)) {
-				ansLine.erase(ansLine.find_last_not_of(" \t\r\n") + 1);
-				outLine.erase(outLine.find_last_not_of(" \t\r\n") + 1);
+				auto ansTrim = ansLine.find_last_not_of(" \t\r\n");
+				auto outTrim = outLine.find_last_not_of(" \t\r\n");
+				if (ansTrim != std::string::npos) ansLine.erase(ansTrim + 1);
+				else ansLine.clear();
+				if (outTrim != std::string::npos) outLine.erase(outTrim + 1);
+				else outLine.clear();
 				if (ansLine != outLine) {
 					filesEqual = false;
 					break;
@@ -1118,7 +1183,7 @@ namespace CaryonDebug {
 
 	/**
 	 * debug
-	 * - 描述: 便捷接口，先生成 debug 文件再比较（并暂停）。
+	 * - 描述: 便捷接口，先生成 debug 文件再比较。
 	 * - 参数:
 	 *    startIndex: 起始编号
 	 *    endIndex: 结束编号
