@@ -1,5 +1,7 @@
 # Caryon - A test data generator for C++
 
+目前仅限 `Windows`。
+
 `std.cpp` 内写入正解，`myprogram.cpp` 内写入暴力解，`test.cpp` 内写入生成数据过程。
 
 这些文件依次编译并运行。
