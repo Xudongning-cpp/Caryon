@@ -1,4 +1,4 @@
-#include "caryon_temp.h"
+#include "caryon.h"
 int main(int argc, char *argv[]) {
 	datasetName = "TEST";
 	rnd.setSeed(time(0));
